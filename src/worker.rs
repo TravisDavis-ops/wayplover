@@ -73,7 +73,7 @@ impl InputWorker {
                     let mut port = serial::open(&config.port).expect("Failed to connect.");
                     loop {
                         let mut b_stroke: [u8; BYTES_PER_STROKE] = [0; BYTES_PER_STROKE];
-                        if let Err(e) = port.read_exact(&mut b_stroke) {
+                        if let Err(_e) = port.read_exact(&mut b_stroke) {
                             continue;
                         };
 
