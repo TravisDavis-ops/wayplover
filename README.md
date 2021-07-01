@@ -1,2 +1,0 @@
-# wayplover
-Steno for Wayland
