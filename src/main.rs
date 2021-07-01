@@ -1,27 +1,20 @@
-#![allow(unused_imports)]
-#[macro_export]
 use lazy_static::lazy_static;
-use maplit::hashmap;
-use serial;
-use serial::unix::TTYPort;
+use clap::{Arg, App};
 use std::collections::{HashMap, HashSet};
+use maplit::hashmap;
+use std::time::Duration;
+use json;
 use std::fs::File;
 use std::io::prelude::*;
-use std::io::stdout;
-use std::ops::Add;
 use std::thread::sleep;
-use std::time::Duration;
-use termion::*;
-pub mod console;
-pub mod editor;
-pub mod events;
+pub mod ui;
 pub mod steno;
-
-use editor::Editor;
-
-use json;
-type Position = (u16, u16);
-
+pub mod worker;
+const NAME: &str = env!("CARGO_CRATE_NAME");
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+const AUTHORS: &str = env!("CARGO_PKG_AUTHORS");
+const DESCRIPTION: &str = env!("CARGO_PKG_DESCRIPTION");
+//todo move steno const to steno mod
 const BYTES_PER_STROKE: usize = 6;
 const STENO_MAP: [&str; 42] = [
     "Fn", "#", "#", "#", "#", "#", "#", "S-", "S-", "T-", "K-", "P-", "W-", "H-", "R-", "A-", "O-",
@@ -65,6 +58,32 @@ macro_rules! key_set{
 
 }
 fn main() {
-    let mut app = Editor::default();
-    app.run();
+
+    let app = App::new(NAME)
+        .version(VERSION)
+        .author(AUTHORS)
+        .about(DESCRIPTION)
+        .arg(Arg::with_name("port")
+             .short("p")
+             .long("port")
+             .value_name("PORT")
+             .help("The device name ie /dev/ttyACM0."))
+        .arg(Arg::with_name("dictonary")
+              .short("d")
+              .long("dictonary")
+              .value_name("DICTONARY")
+              .required(true)
+              .help("The dictonary file to use."));
+    let matches = app.get_matches();
+    let port = matches.value_of("port").unwrap_or("/dev/ttyACM0");
+    let path = matches.value_of("dictonary").unwrap();
+    let config  = worker::Config{ tick_rate: Duration::from_secs(5), port: port.to_string()};
+    let worker = worker::InputWorker::with_config(config);
+    let dictonary = steno::Dictonary::from_file(path);
+
+    let mut ui = ui::Ui::new(worker, dictonary);
+    ui.run();
+    //todo rename Ui
+    //let mut app = Editor::default();
+    //app.run();
 }

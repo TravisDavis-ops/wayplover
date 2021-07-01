@@ -1,4 +1,5 @@
 use crate::*;
+#[derive(Debug)]
 pub struct Stroke {
     pub keys: Vec<String>,
 }
@@ -58,7 +59,7 @@ impl Dictonary {
     pub fn from_file(path: &str) -> Self {
         let mut file = File::open(path).unwrap();
         let mut contents = std::string::String::new();
-        let bytes_read = file.read_to_string(&mut contents);
+        let _bytes_read = file.read_to_string(&mut contents);
         let json = json::parse(&contents).unwrap();
         use json::JsonValue::*;
         match json {
