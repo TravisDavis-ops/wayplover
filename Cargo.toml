@@ -1,6 +1,6 @@
 [package]
 name = "wayplover"
-description = "Steno Stoke Interperter"
+description = "Steno Stoke Interpreter"
 version = "0.1.1"
 license = "MIT OR Apache-2.0"
 edition = "2018"
