@@ -68,20 +68,20 @@ fn main() {
              .long("port")
              .value_name("PORT")
              .help("The device name ie /dev/ttyACM0."))
-        .arg(Arg::with_name("dictonary")
+        .arg(Arg::with_name("dictionary")
               .short("d")
-              .long("dictonary")
+              .long("dictionary")
               .value_name("DICTONARY")
               .required(true)
-              .help("The dictonary file to use."));
+              .help("The dictionary file to use."));
     let matches = app.get_matches();
     let port = matches.value_of("port").unwrap_or("/dev/ttyACM0");
-    let path = matches.value_of("dictonary").unwrap();
+    let path = matches.value_of("dictionary").unwrap();
     let config  = worker::Config{ tick_rate: Duration::from_secs(5), port: port.to_string()};
     let worker = worker::InputWorker::with_config(config);
-    let dictonary = steno::Dictonary::from_file(path);
+    let dictionary = steno::Dictionary::from_file(path);
 
-    let mut ui = ui::Ui::new(worker, dictonary);
+    let mut ui = ui::Ui::new(worker, dictionary);
     ui.run();
     //todo rename Ui
     //let mut app = Editor::default();

@@ -30,7 +30,7 @@ impl Stroke {
         //let steno_vec = steno_vec.iter_mut().map(|e| e.replace("-", "")).collect();
         Self { keys: steno_vec }
     }
-    pub fn resolve(&self, dict: &mut Dictonary) -> String {
+    pub fn resolve(&self, dict: &mut Dictionary) -> String {
         dict.lookup(
             self.keys
                 .iter()
@@ -51,11 +51,11 @@ impl Stroke {
         self.keys.is_empty()
     }
 }
-pub struct Dictonary {
+pub struct Dictionary {
     pub repr: HashMap<String, String>,
     pub last: String,
 }
-impl Dictonary {
+impl Dictionary {
     pub fn from_file(path: &str) -> Self {
         let mut file = File::open(path).unwrap();
         let mut contents = std::string::String::new();
