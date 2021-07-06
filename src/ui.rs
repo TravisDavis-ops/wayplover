@@ -12,14 +12,14 @@ pub struct Ui {
     terminal: Terminal<TermionBackend<RawTerminal<std::io::Stdout>>>,
     keyboard: uinput::VirtualDevice,
     worker: InputWorker,
-    dictonary: Dictonary,
+    dictionary: Dictionary,
     chord_history: History,
     stroke_history: History,
 }
 
 impl Default for Ui {
     fn default() -> Self {
-        let dictonary = Dictonary::from_file("./main.json");
+        let dictionary = Dictionary::from_file("./main.json");
         let backend = TermionBackend::new(stdout().into_raw_mode().unwrap());
         let mut terminal = tui::Terminal::new(backend).unwrap();
         let stroke_history = History::new(Vec::new(), terminal.size().unwrap().height as usize);
@@ -69,14 +69,14 @@ impl Default for Ui {
             keyboard,
             stroke_history,
             chord_history,
-            dictonary,
+            dictionary,
             worker,
         }
     }
 }
 
 impl Ui {
-    pub fn new(worker: InputWorker, dictonary: Dictonary) -> Self {
+    pub fn new(worker: InputWorker, dictionary: Dictionary) -> Self {
         let backend = TermionBackend::new(stdout().into_raw_mode().unwrap());
         let mut terminal = tui::Terminal::new(backend).unwrap();
         let chord_history = History::new(Vec::new(), terminal.size().unwrap().height as usize);
@@ -125,14 +125,14 @@ impl Ui {
             keyboard,
             chord_history,
             stroke_history,
-            dictonary,
+            dictionary,
             worker,
         }
     }
     fn handle_strokes(&mut self, stroke: Stroke) {
         use evdev::*;
         let mut seq = Vec::new();
-        for (i, key) in stroke.resolve(&mut self.dictonary).split("").enumerate() {
+        for (i, key) in stroke.resolve(&mut self.dictionary).split("").enumerate() {
             if key == "*" && i == 1 {
                 seq.push(Key::KEY_LEFTCTRL);
                 seq.push(Key::KEY_BACKSPACE);
@@ -202,7 +202,7 @@ impl Ui {
             }
         }
         self.chord_history
-            .set_items(vec![stroke.resolve(&mut self.dictonary)]);
+            .set_items(vec![stroke.resolve(&mut self.dictionary)]);
         self.chord_history.select_new();
         self.stroke_history.set_items(vec![stroke.plain()]);
         self.stroke_history.select_new();
