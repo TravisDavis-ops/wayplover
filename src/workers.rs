@@ -70,7 +70,7 @@ impl InputWorker {
             Builder::new()
                 .name("DeviceInput".to_string())
                 .spawn(move || {
-                    let mut port = serial::open(&config.port).expect("Failed to connect.");
+                    let mut port = serial::open(&config.port).unwrap();
                     loop {
                         let mut b_stroke: [u8; BYTES_PER_STROKE] = [0; BYTES_PER_STROKE];
                         if let Err(_e) = port.read_exact(&mut b_stroke) {
@@ -113,7 +113,14 @@ impl InputWorker {
         }
     }
     pub fn poll(&self) -> Result<InputEvents, mpsc::RecvError> {
-
         self.rx.recv()
     }
 }
+enum AudioEvent {
+
+}
+struct AudioWorker {
+   tx: mpsc::Receiver<AudioEvent>,
+   audio: thread::JoinHandle<()>,
+}
+

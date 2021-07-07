@@ -1,7 +1,34 @@
 use crate::*;
+use regex::*;
+use std::borrow::*;
+
 #[derive(Debug)]
 pub struct Stroke {
     pub keys: Vec<String>,
+}
+#[derive(Clone)]
+pub enum Command {
+    Append(String),
+    Output(String),
+    Error(String),
+    Delete,
+}
+
+pub enum ActionSymbol {
+    Suffix,
+    Glue,
+    Delete,
+    Noop,
+}
+impl Command {
+    pub fn as_text(&self) -> (ActionSymbol, String) {
+        match self {
+            Self::Append(s) => (ActionSymbol::Suffix, s.to_owned()),
+            Self::Output(s) => (ActionSymbol::Noop, s.to_owned()),
+            Self::Delete => (ActionSymbol::Delete, String::new()),
+            Self::Error(s) => (ActionSymbol::Noop, s.to_owned()),
+        }
+    }
 }
 impl Stroke {
     pub fn new(steno_keys: Vec<&str>) -> Self {
@@ -11,11 +38,8 @@ impl Stroke {
         }
         let mut steno_vec = key_set.into_iter().collect::<Vec<String>>();
 
-        steno_vec.sort_by(|k1, k2| {
-            let (k1, k2) = (STENO_ORDER.get(k1.as_str()), STENO_ORDER.get(k2.as_str()));
-            let (k1, k2) = (k1.unwrap(), k2.unwrap());
-            k1.cmp(k2)
-        });
+        steno_vec.sort_by(|k1, k2| STENO_ORDER.compare( k1.as_str(), k2.as_str()));
+
         if steno_vec.contains(&"#".to_string()) {
             let mut number_steno_vec = Vec::new();
             for (i, l) in steno_vec.iter_mut().enumerate() {
@@ -30,7 +54,7 @@ impl Stroke {
         //let steno_vec = steno_vec.iter_mut().map(|e| e.replace("-", "")).collect();
         Self { keys: steno_vec }
     }
-    pub fn resolve(&self, dict: &mut Dictionary) -> String {
+    pub fn resolve(&self, dict: &mut Dictionary) -> Command {
         dict.lookup(
             self.keys
                 .iter()
@@ -38,7 +62,6 @@ impl Stroke {
                 .collect::<Vec<String>>()
                 .join(""),
         )
-        .unwrap_or("".to_string())
     }
     pub fn plain(&self) -> String {
         self.keys
@@ -47,13 +70,16 @@ impl Stroke {
             .collect::<Vec<String>>()
             .join("")
     }
+    pub fn raw(&self) -> Vec<String> {
+        self.keys.clone()
+    }
     pub fn is_empty(&self) -> bool {
         self.keys.is_empty()
     }
 }
 pub struct Dictionary {
     pub repr: HashMap<String, String>,
-    pub last: String,
+    pub last: Option<String>,
 }
 impl Dictionary {
     pub fn from_file(path: &str) -> Self {
@@ -70,7 +96,7 @@ impl Dictionary {
                 }
                 Self {
                     repr: map,
-                    last: std::string::String::new(),
+                    last: None,
                 }
             }
             _ => {
@@ -78,20 +104,29 @@ impl Dictionary {
             }
         }
     }
-    fn lookup(&mut self, steno_string: String) -> Option<String> {
-        let mut entrys: Vec<&String> = self
-            .repr
-            .keys()
-            .into_iter()
-            .filter(|&s| s.contains(&steno_string))
-            .collect();
-        let mut output: String = steno_string.clone();
-        entrys.sort_by(|&a, &b| Ord::cmp(&a.len(), &b.len()));
-        for stroke in entrys {
-            if stroke.eq(&steno_string) {
-                output = self.repr.get(stroke).unwrap().to_owned();
+
+
+    fn lookup(&mut self, chord: String) -> Command {
+        if chord.eq(&"*".to_string()) {
+            return Command::Delete;
+        }
+            // i need to get a handle on this dictonary problem
+
+        if let Some(stroke) = self.repr.get(&chord) {
+            let re = Regex::new(r"\{\^(?P<suffix>\w*)\}").unwrap();
+            let captures = re.captures(&stroke);
+            if let Some(cap) = captures {
+                if let Some(last) = self.last.clone() {
+                    return Command::Append(format!("{}{}", last , &cap["suffix"]));
+                }
+                return Command::Output(cap["suffix"].to_string());
+            } else {
+                self.last = Some(stroke.to_owned());
+                return Command::Output(stroke.to_owned());
             }
         }
-        return Some(output);
+        self.last = None;
+
+        return Command::Error(chord);
     }
 }
