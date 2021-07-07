@@ -16,6 +16,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v2
+    - name: Install
+      run: apt-get install libasoun2-dev
     - name: Build
       run: cargo build --verbose
     - name: Run tests
