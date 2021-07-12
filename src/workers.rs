@@ -4,6 +4,10 @@
  *  a worker is a collection of threads that produces events
  */
 use crate::{steno::Stroke, BYTES_PER_STROKE, STENO_MAP};
+use rodio::{
+    source::{SineWave, Source},
+    OutputStream, Sink,
+};
 use serial;
 use std::io::{self, Read};
 use std::sync::mpsc;
@@ -52,7 +56,7 @@ impl InputWorker {
             let _config = config.clone();
             Builder::new()
                 .name("WindowInput".to_string())
-                .spawn(move || {
+                .spawn(move || loop {
                     let stdin = io::stdin();
                     for key in stdin.keys() {
                         if let Ok(key) = key {
@@ -86,8 +90,12 @@ impl InputWorker {
                             }
                         }
                         let stroke = Stroke::new(o_steno);
-                        if !stroke.is_empty() {
-                            tx.send(InputEvents::Device(stroke)).unwrap();
+                        if let Ok(stroke) = stroke {
+                            if !stroke.is_empty() {
+                                tx.send(InputEvents::Device(stroke)).unwrap();
+                            }
+                        } else {
+                            eprintln!("Empty Stroke");
                         }
                     }
                 })
@@ -116,11 +124,61 @@ impl InputWorker {
         self.rx.recv()
     }
 }
-enum AudioEvent {
-
-}
-struct AudioWorker {
-   tx: mpsc::Receiver<AudioEvent>,
-   audio: thread::JoinHandle<()>,
+pub enum Sound {
+    Error,
 }
 
+pub enum AudioStatus {
+    Volume(f32),
+}
+
+pub enum AudioControl {
+    Play(Sound),
+    Volume(Option<f32>),
+    Stop,
+}
+pub struct AudioWorker {
+    tx: mpsc::Sender<AudioControl>,
+    rx: mpsc::Receiver<AudioStatus>,
+    handler: thread::JoinHandle<()>,
+}
+impl Worker<AudioControl, AudioStatus> for AudioWorker {
+    fn start() -> Self {
+        let (thread_tx, thread_rx) = mpsc::channel();
+        let (worker_tx, worker_rx) = mpsc::channel();
+        let handler = thread::Builder::new()
+            .name("AudioThread".to_string())
+            .spawn(move || {
+                let (_stream, stream_handle) = OutputStream::try_default().unwrap();
+                let sink = Sink::try_new(&stream_handle).unwrap();
+                loop {
+                    match thread_rx.recv().unwrap() {
+                        AudioControl::Play(Sound::Error) => {
+                            let sound = SineWave::new(440).take_duration(Duration::from_millis(5));
+                            sink.append(sound);
+                        }
+                        AudioControl::Volume(None){
+                            worker_tx.send(AudioStatus::Volume(sink.volume()))
+                        }
+                        _ => {
+                            sink.stop();
+                        }
+                    }
+                    sink.sleep_until_end();
+
+                }
+            })
+            .unwrap();
+        Self { tx: thread_tx, rx: worker_rx, handler }
+    }
+}
+
+trait Worker<In, Out> {
+    fn start() -> Self;
+    fn send(&self, e: In){
+        self.tx.send(e).unwrap()
+    }
+    fn recv(&self) -> Out {
+        self.rx.recv().unwrap()
+    }
+}
