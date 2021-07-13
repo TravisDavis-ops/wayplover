@@ -38,7 +38,7 @@ impl Stroke {
         }
         let mut steno_vec = key_set.into_iter().collect::<Vec<String>>();
 
-        steno_vec.sort_by(|k1, k2| STENO_ORDER.compare( k1.as_str(), k2.as_str()));
+        steno_vec.sort_by(|k1, k2| STENO_ORDER.compare(k1.as_str(), k2.as_str()));
 
         if steno_vec.contains(&"#".to_string()) {
             let mut number_steno_vec = Vec::new();
@@ -105,19 +105,18 @@ impl Dictionary {
         }
     }
 
-
     fn lookup(&mut self, chord: String) -> Command {
         if chord.eq(&"*".to_string()) {
             return Command::Delete;
         }
-            // i need to get a handle on this dictonary problem
+        // i need to get a handle on this dictonary problem
 
         if let Some(stroke) = self.repr.get(&chord) {
             let re = Regex::new(r"\{\^(?P<suffix>\w*)\}").unwrap();
             let captures = re.captures(&stroke);
             if let Some(cap) = captures {
                 if let Some(last) = self.last.clone() {
-                    return Command::Append(format!("{}{}", last , &cap["suffix"]));
+                    return Command::Append(format!("{}{}", last, &cap["suffix"]));
                 }
                 return Command::Output(cap["suffix"].to_string());
             } else {

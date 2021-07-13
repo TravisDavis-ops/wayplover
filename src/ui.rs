@@ -1,4 +1,8 @@
-use crate::{steno::*, workers::InputWorker, *};
+use crate::workers::{
+    AudioControl, AudioWorker, Config, DeviceStatus, DeviceWorker, InputWorker, Sound, Worker,
+};
+
+use crate::{steno::*, *};
 use evdev::{uinput, Key as VirtualKey};
 use rodio::{
     source::{SineWave, Source},
@@ -13,55 +17,41 @@ use termion::{
     event::Key as PhysicalKey,
     raw::{IntoRawMode, RawTerminal},
 };
-use tui::{backend::TermionBackend, widgets::*, Terminal, terminal::Frame, layout::*};
+use tui::{backend::TermionBackend, layout::*, terminal::Frame, widgets::*, Terminal};
 enum Event {
     Play,
     Pause,
     Stop,
 }
-pub struct Ui {
+pub struct WorkerPool {
+    pub audio: AudioWorker,
+    pub device: DeviceWorker,
+    pub input: InputWorker,
+}
+pub struct Tui {
     terminal: Terminal<TermionBackend<RawTerminal<std::io::Stdout>>>,
     keyboard: uinput::VirtualDevice,
-    worker: InputWorker,
+    worker_pool: WorkerPool,
     dictionary: Dictionary,
-    audio_thread: (mpsc::Sender<Event>, thread::JoinHandle<()>),
-    chord_history: History<Command, ListState>,
-    last_stroke: History<String, TableState>,
-    stroke_history: History<String, ListState>,
+    output: History<Command, ListState>,
+    last: History<String, TableState>,
+    raw: History<String, ListState>,
 }
 
-impl Default for Ui {
+impl Default for Tui {
     fn default() -> Self {
-        let (tx, rx) = mpsc::channel();
-        let audio_thread = {
-            thread::Builder::new()
-                .name("Audio Server".to_string())
-                .spawn(move || {
-                    let (stream, stream_handle) = OutputStream::try_default().unwrap();
-                    let sink = Sink::try_new(&stream_handle).unwrap();
-                    loop {
-                        match rx.recv() {
-                            Ok(Event::Play) => {
-                                let sound =
-                                    SineWave::new(440).take_duration(Duration::from_secs(3));
-                                sink.append(sound);
-                            }
-                            _ => {
-                                sink.stop();
-                            }
-                        }
-                        sink.sleep_until_end();
-                    }
-                })
-                .unwrap()
-        };
         let dictionary = Dictionary::from_file("./main.json");
         let backend = TermionBackend::new(stdout().into_raw_mode().unwrap());
         let mut terminal = tui::Terminal::new(backend).unwrap();
-        let stroke_history = History::new(Vec::new(), 10);
-        let chord_history = History::new(Vec::new(), 10);
-        let last_stroke = History::new(Vec::new(), 1);
-        let worker = InputWorker::default();
+        let raw = History::new(Vec::new(), 10);
+        let output = History::new(Vec::new(), 10);
+        let last = History::new(Vec::new(), 1);
+        let config = Config::default();
+        let worker_pool = WorkerPool {
+            audio: AudioWorker::start(config.clone()),
+            device: DeviceWorker::start(config.clone()),
+            input: InputWorker::default(),
+        };
         let keyboard = uinput::VirtualDeviceBuilder::new()
             .unwrap()
             .name("wayplover")
@@ -73,27 +63,22 @@ impl Default for Ui {
         Self {
             terminal,
             keyboard,
-            stroke_history,
-            chord_history,
+            raw,
+            last,
+            output,
             dictionary,
-            audio_thread: (tx, audio_thread),
-            last_stroke,
-            worker,
+            worker_pool,
         }
     }
 }
 
-impl Ui {
-    pub fn new(worker: InputWorker, dictionary: Dictionary) -> Self {
+impl Tui {
+    pub fn new(worker_pool: WorkerPool, dictionary: Dictionary) -> Self {
         let backend = TermionBackend::new(stdout().into_raw_mode().unwrap());
         let mut terminal = tui::Terminal::new(backend).unwrap();
-        let chord_history = History::<steno::Command, ListState>::new(
-            Vec::new(),
-            terminal.size().unwrap().height as usize,
-        );
-        let stroke_history =
-            History::<String, ListState>::new(Vec::new(), terminal.size().unwrap().height as usize);
-        let last_stroke = History::<String, _>::new(Vec::new(), 1);
+        let output = History::new(Vec::new(), 500);
+        let raw = History::new(Vec::new(), 500);
+        let last = History::new(Vec::new(), 1);
         let keyboard = uinput::VirtualDeviceBuilder::new()
             .unwrap()
             .name("wayplover")
@@ -101,39 +86,15 @@ impl Ui {
             .unwrap()
             .build()
             .unwrap();
-        let (tx, rx) = mpsc::channel();
-        let audio_thread = {
-            thread::Builder::new()
-                .name("Audio Server".to_string())
-                .spawn(move || {
-                    let (_stream, stream_handle) = OutputStream::try_default().unwrap();
-                    let sink = Sink::try_new(&stream_handle).unwrap();
-                    loop {
-                        match rx.recv() {
-                            Ok(Event::Play) => {
-                                let sound =
-                                    SineWave::new(440).take_duration(Duration::from_millis(5));
-                                sink.append(sound);
-                            }
-                            _ => {
-                                sink.stop();
-                            }
-                        }
-                        sink.sleep_until_end();
-                    }
-                })
-                .unwrap()
-        };
         terminal.clear().unwrap();
         Self {
             terminal,
             keyboard,
-            audio_thread: (tx, audio_thread),
-            last_stroke,
-            chord_history,
-            stroke_history,
+            raw,
+            last,
+            output,
             dictionary,
-            worker,
+            worker_pool,
         }
     }
     fn handle_strokes(&mut self, stroke: Stroke) {
@@ -141,10 +102,15 @@ impl Ui {
         let mut seq = Vec::new();
         let (sym, text) = {
             let s = stroke.resolve(&mut self.dictionary);
-            match s {
-                Command::Error(_) => {
-                    self.audio_thread.0.send(Event::Play).unwrap();
-                }
+            match s.clone() {
+                Command::Error(_) => self
+                    .worker_pool
+                    .audio
+                    .send(AudioControl::Play(Sound::Error)),
+                Command::Output(text) => self
+                    .worker_pool
+                    .audio
+                    .send(AudioControl::Speak(text.clone())),
                 _ => {}
             }
             s.as_text()
@@ -202,38 +168,29 @@ impl Ui {
                 }
             }
         }
-        self.chord_history.push(stroke.resolve(&mut self.dictionary));
-        self.chord_history.select(0);
-        self.stroke_history.push(stroke.plain());
-        self.stroke_history.select(0);
-        self.last_stroke.replace(stroke.raw())
+        self.output.push(stroke.resolve(&mut self.dictionary));
+        self.output.select(0);
+        self.raw.push(stroke.plain());
+        self.raw.select(0);
+        self.last.replace(stroke.raw())
     }
 
     fn handle_keys(&mut self, _key: PhysicalKey) {}
 
     pub fn run(&mut self) {
-        use crate::workers::InputEvents::*;
         use tui::widgets::*;
         loop {
             self.terminal.get_frame().set_cursor(0, 0);
-            match self.worker.poll().unwrap() {
-                Device(s) => {
-                    self.handle_strokes(s);
-                }
-                Window(termion::event::Key::Ctrl(key)) => {
-                    if key.eq(&'c') {
-                        self.terminal.clear().unwrap();
-                        return;
+            if let Some(status) = self.worker_pool.device.recv() {
+                match status {
+                    DeviceStatus::Input(s) => {
+                        self.handle_strokes(s);
                     }
                 }
-                Window(key) => {
-                    self.handle_keys(key);
-                }
-                Tick => {}
             }
-            let mut chord_history = self.chord_history.clone();
-            let mut stroke_history = self.stroke_history.clone();
-            let mut last_stroke = self.last_stroke.clone();
+            let mut chord_history = self.output.clone();
+            let mut stroke_history = self.raw.clone();
+            let last_stroke = self.last.clone();
             self.terminal
                 .draw(|f| {
                     let size = f.size();
@@ -282,12 +239,16 @@ impl Ui {
 
                         f.render_stateful_widget(chord_list, segments[0], &mut chord_history.state);
                     }
-                        let mut widths: Vec<Constraint> = Vec::new();
-                        for _ in 0..STENO_ORDER.len() {
-                            widths.push(Constraint::Ratio(1, STENO_ORDER.len().try_into().unwrap()));
-                        }
-                        f.render_widget(Self::draw_last(&last_stroke).widths(&widths),segments[1]);
-                    f.render_stateful_widget(Self::draw_histroy(&stroke_history), segments[2], stroke_history.state());
+                    let mut widths: Vec<Constraint> = Vec::new();
+                    for _ in 0..STENO_ORDER.len() {
+                        widths.push(Constraint::Ratio(1, STENO_ORDER.len().try_into().unwrap()));
+                    }
+                    f.render_widget(Self::draw_last(&last_stroke).widths(&widths), segments[1]);
+                    f.render_stateful_widget(
+                        Self::draw_histroy(&stroke_history),
+                        segments[2],
+                        stroke_history.state(),
+                    );
                 })
                 .unwrap();
             //self.terminal.get_frame().set_cursor(1, 1);
@@ -319,29 +280,29 @@ impl Ui {
     }
 
     fn draw_last(stroke: &History<String, TableState>) -> Table {
-                        use tui::style::*;
-                        use tui::widgets::*;
-                        let steno_order = STENO_ORDER.descending_keys();
-                        let s = stroke.items.clone();
-                        let cells = steno_order
-                            .rev()
-                            .map(|letter| {
-                                if s.contains(&letter.to_string()) {
-                                    Cell::from(format!("{}", letter.replace("-", "")))
-                                        .style(Style::default().fg(Color::White))
-                                } else {
-                                    Cell::from(format!("{}", letter.replace("-", "")))
-                                        .style(Style::default().fg(Color::Blue))
-                                }
-                            })
-                            .collect::<Vec<Cell>>();
-                        let header = Row::new(cells);
+        use tui::style::*;
+        use tui::widgets::*;
+        let steno_order = STENO_ORDER.descending_keys();
+        let s = stroke.items.clone();
+        let cells = steno_order
+            .rev()
+            .map(|letter| {
+                if s.contains(&letter.to_string()) {
+                    Cell::from(format!("{}", letter.replace("-", "")))
+                        .style(Style::default().fg(Color::White))
+                } else {
+                    Cell::from(format!("{}", letter.replace("-", "")))
+                        .style(Style::default().fg(Color::Blue))
+                }
+            })
+            .collect::<Vec<Cell>>();
+        let header = Row::new(cells);
 
-                        Table::new(vec![])
-                            .header(header)
-                            .block(Block::default().title("Steno Order").borders(Borders::ALL))
-                            .column_spacing(1)
-                            .style(Style::default().fg(Color::White).bg(Color::Black))
+        Table::new(vec![])
+            .header(header)
+            .block(Block::default().title("Steno Order").borders(Borders::ALL))
+            .column_spacing(1)
+            .style(Style::default().fg(Color::White).bg(Color::Black))
     }
 
     fn draw_output() {}

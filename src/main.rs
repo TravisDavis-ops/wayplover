@@ -168,14 +168,19 @@ fn main() {
         );
     let matches = app.get_matches();
     let port = matches.value_of("port").unwrap_or("/dev/ttyACM0");
-    let path = matches.value_of("dictionary").unwrap();
+    let path = matches.value_of("dictionary").unwrap_or("./main.json");
     let config = workers::Config {
-        tick_rate: Duration::from_secs(5),
+        tick_rate: Duration::from_millis(5),
         port: port.to_string(),
     };
-    let worker = workers::InputWorker::with_config(config);
+    use workers::Worker;
+    let worker_pool = ui::WorkerPool {
+        audio: workers::AudioWorker::start(config.clone()),
+        device: workers::DeviceWorker::start(config.clone()),
+        input: workers::InputWorker::with_config(config.clone()),
+    };
     let dictionary = steno::Dictionary::from_file(path);
 
-    let mut ui = ui::Ui::new(worker, dictionary);
+    let mut ui = ui::Tui::new(worker_pool, dictionary);
     ui.run();
 }
