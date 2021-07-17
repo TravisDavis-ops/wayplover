@@ -55,6 +55,7 @@ lazy_static! {
             "x" => (None, Key::KEY_X), "X" => (Some(Key::KEY_LEFTSHIFT), Key::KEY_X),
             "y" => (None, Key::KEY_Y), "Y" => (Some(Key::KEY_LEFTSHIFT), Key::KEY_Y),
             "z" => (None, Key::KEY_Z), "Z" => (Some(Key::KEY_LEFTSHIFT), Key::KEY_Z),
+            " " => (None, Key::KEY_SPACE),
             "'" => (None, Key::KEY_APOSTROPHE), "\""=> (Some(Key::KEY_LEFTSHIFT), Key::KEY_APOSTROPHE)
         }
     };
