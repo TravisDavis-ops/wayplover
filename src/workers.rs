@@ -27,65 +27,77 @@ impl Default for Config {
         }
     }
 }
-#[derive(Debug)]
-pub enum InputEvents {
-    Window(Key),
-    Device(Stroke),
-    Tick,
+
+pub struct WorkerPool {
+    pub audio: AudioWorker,
+    pub device: DeviceWorker,
+    pub input: InputWorker,
 }
-pub struct InputWorker {
-    rx: mpsc::Receiver<InputEvents>,
-    h_window: thread::JoinHandle<()>,
-    h_tick: thread::JoinHandle<()>,
-}
-impl Default for InputWorker {
-    fn default() -> Self {
-        Self::new()
+impl Shutdown<InputControl, InputStatus> for WorkerPool {}
+impl Shutdown<DeviceControl, DeviceStatus> for WorkerPool {}
+impl Shutdown<AudioControl, AudioStatus> for WorkerPool {}
+
+pub trait Shutdown<In, Out> {
+    fn shutdown<T: Worker<In, Out>>(worker: &T) {
+        worker.shutdown();
     }
+}
+#[derive(Debug)]
+pub enum InputStatus {
+    Input(Key),
+}
+pub enum InputControl {
+    Shutdown,
+}
+
+pub struct InputWorker {
+    tx: mpsc::Sender<InputControl>,
+    rx: mpsc::Receiver<InputStatus>,
+    handler: thread::JoinHandle<()>,
 }
 impl InputWorker {
-    fn new() -> Self {
-        Self::with_config(Config::default())
-    }
-    pub fn with_config(config: Config) -> Self {
+    /* does ui need to know what the read event is
+     * */
+}
+impl Worker<InputControl, InputStatus> for InputWorker {
+    fn start(config: Config) -> Self {
         use std::thread::Builder;
-        let (tx, rx) = mpsc::channel();
-        let h_window = {
-            let tx = tx.clone();
+        let ((tx, thread_rx), (thread_tx, rx)) = (mpsc::channel(), mpsc::channel());
+        let handler = {
             let _config = config.clone();
             Builder::new()
                 .name("WindowInput".to_string())
                 .spawn(move || loop {
                     let stdin = io::stdin();
+                    if let Ok(e) = thread_rx.try_recv() {
+                        use InputControl::*;
+                        match e {
+                            Shutdown => {
+                                break;
+                            }
+                        }
+                    }
+
                     for key in stdin.keys() {
                         if let Ok(key) = key {
-                            if let Err(err) = tx.send(InputEvents::Window(key)) {
-                                return;
+                            if let Err(_err) = thread_tx.send(InputStatus::Input(key)) {
+                                continue;
                             }
                         }
                     }
                 })
+                .unwrap()
         };
-        let h_tick = {
-            let tx = tx.clone();
-            let config = config.clone();
-            Builder::new()
-                .name("WorkerHeart".to_string())
-                .spawn(move || loop {
-                    if let Err(err) = tx.send(InputEvents::Tick) {
-                        break;
-                    }
-                    thread::sleep(config.tick_rate);
-                })
-        };
-        Self {
-            rx,
-            h_window: h_window.expect("Failed start."),
-            h_tick: h_tick.expect("Failed start."),
-        }
+        Self { rx, tx, handler }
     }
-    pub fn poll(&self) -> Result<InputEvents, mpsc::RecvError> {
-        self.rx.recv()
+    fn recv(&self) -> Option<InputStatus> {
+        self.rx.try_recv().ok()
+    }
+    fn send(&self, e: InputControl) {
+        self.tx.send(e).unwrap()
+    }
+    fn shutdown(&self) {
+        self.send(InputControl::Shutdown);
     }
 }
 pub enum Sound {
@@ -101,6 +113,7 @@ pub enum DeviceControl {
     Enable,
     Reconnect(&'static str),
     Disconnect,
+    Shutdown,
 }
 pub struct DeviceWorker {
     tx: mpsc::Sender<DeviceControl>,
@@ -125,6 +138,9 @@ impl Worker<DeviceControl, DeviceStatus> for DeviceWorker {
                             Reconnect(new_path) => {
                                 port = serial::open(new_path).unwrap();
                                 continue;
+                            }
+                            Shutdown => {
+                                break;
                             }
                             _ => {}
                         }
@@ -153,7 +169,10 @@ impl Worker<DeviceControl, DeviceStatus> for DeviceWorker {
     }
 
     fn send(&self, e: DeviceControl) {
-        todo!()
+        self.tx.send(e).expect("Send Error");
+    }
+    fn shutdown(&self) {
+        self.send(DeviceControl::Shutdown);
     }
 
     fn recv(&self) -> Option<DeviceStatus> {
@@ -174,6 +193,7 @@ pub enum AudioControl {
     Speak(String),
     Volume(Option<f32>),
     Stop,
+    Shutdown,
 }
 pub struct AudioWorker {
     tx: mpsc::Sender<AudioControl>,
@@ -192,7 +212,7 @@ impl Worker<AudioControl, AudioStatus> for AudioWorker {
                 let sink = Sink::try_new(&stream_handle).unwrap();
                 let mut engine = Tts::default().unwrap();
                 loop {
-                    if let Ok(e) = thread_rx.try_recv() {
+                    if let Ok(e) = thread_rx.recv() {
                         match e {
                             AudioControl::Play(Sound::Error) => {
                                 let sound =
@@ -210,6 +230,9 @@ impl Worker<AudioControl, AudioStatus> for AudioWorker {
                             }
                             AudioControl::Speak(word) => {
                                 engine.speak(word, true).unwrap();
+                            }
+                            AudioControl::Shutdown => {
+                                break;
                             }
                             _ => {
                                 sink.stop();
@@ -234,10 +257,14 @@ impl Worker<AudioControl, AudioStatus> for AudioWorker {
     fn recv(&self) -> Option<AudioStatus> {
         todo!()
     }
+    fn shutdown(&self) {
+        self.send(AudioControl::Shutdown);
+    }
 }
 
 pub trait Worker<In, Out> {
     fn start(c: Config) -> Self;
     fn send(&self, e: In);
     fn recv(&self) -> Option<Out>;
+    fn shutdown(&self);
 }

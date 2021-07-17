@@ -9,13 +9,8 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 use std::{
-    collections::HashMap,
-    fmt,
-    hash::Hash,
-    iter::DoubleEndedIterator,
-    ops::Index,
+    cmp::Ordering, collections::HashMap, fmt, hash::Hash, iter::DoubleEndedIterator, ops::Index,
     vec::Vec,
-    cmp::Ordering,
 };
 
 type ExtractComparable<V, C> = fn(&V) -> C;
@@ -144,22 +139,15 @@ where
         }
     }
     pub fn compare(&self, key1: K, key2: K) -> Ordering {
-       match (self.map.get(&key1), self.map.get(&key2)) {
-           (Some(idx1), Some(idx2)) => {
-               let idx1 = (self.extract_comparable)( idx1);
-               let idx2 = (self.extract_comparable)(idx2);
-               return idx1.cmp(&idx2)
-           }
-           (None, _) => {
-               return Ordering::Greater
-           }
-           (_, None) => {
-               return Ordering::Greater
-           }
-           _ => {
-               return Ordering::Equal
-           }
-       }
+        match (self.map.get(&key1), self.map.get(&key2)) {
+            (Some(idx1), Some(idx2)) => {
+                let idx1 = (self.extract_comparable)(idx1);
+                let idx2 = (self.extract_comparable)(idx2);
+                return idx1.cmp(&idx2);
+            }
+            (None, _) => return Ordering::Greater,
+            (_, None) => return Ordering::Less,
+        }
     }
     pub fn get(&self, key: &K) -> Option<&V> {
         self.map.get(key)
@@ -249,6 +237,3 @@ where
     }
     removed
 }
-
-
-

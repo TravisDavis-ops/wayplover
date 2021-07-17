@@ -1,33 +1,20 @@
 use crate::workers::{
-    AudioControl, AudioWorker, Config, DeviceStatus, DeviceWorker, InputWorker, Sound, Worker,
+    AudioControl, AudioWorker, Config, DeviceStatus, DeviceWorker, InputStatus, InputWorker,
+    Shutdown, Sound, Worker, WorkerPool,
 };
 
 use crate::{steno::*, *};
 use evdev::{uinput, Key as VirtualKey};
-use rodio::{
-    source::{SineWave, Source},
-    OutputStream, Sink,
-};
 use std::convert::TryInto;
 use std::io::stdout;
-use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 use termion::{
     event::Key as PhysicalKey,
     raw::{IntoRawMode, RawTerminal},
 };
-use tui::{backend::TermionBackend, layout::*, terminal::Frame, widgets::*, Terminal};
-enum Event {
-    Play,
-    Pause,
-    Stop,
-}
-pub struct WorkerPool {
-    pub audio: AudioWorker,
-    pub device: DeviceWorker,
-    pub input: InputWorker,
-}
+use tui::{backend::TermionBackend, layout::*, widgets::*, Terminal};
+
 pub struct Tui {
     terminal: Terminal<TermionBackend<RawTerminal<std::io::Stdout>>>,
     keyboard: uinput::VirtualDevice,
@@ -50,7 +37,7 @@ impl Default for Tui {
         let worker_pool = WorkerPool {
             audio: AudioWorker::start(config.clone()),
             device: DeviceWorker::start(config.clone()),
-            input: InputWorker::default(),
+            input: InputWorker::start(config.clone()),
         };
         let keyboard = uinput::VirtualDeviceBuilder::new()
             .unwrap()
@@ -175,17 +162,31 @@ impl Tui {
         self.last.replace(stroke.raw())
     }
 
-    fn handle_keys(&mut self, _key: PhysicalKey) {}
+    fn handle_input(&mut self, key: PhysicalKey) -> Option<()> {
+        match key {
+            PhysicalKey::Ctrl('c') => {
+                WorkerPool::shutdown(&self.worker_pool.input);
+                WorkerPool::shutdown(&self.worker_pool.audio);
+                WorkerPool::shutdown(&self.worker_pool.device);
+                thread::sleep(Duration::from_millis(50));
+                self.terminal.clear().unwrap();
+                Some(())
+            }
+            _ => None,
+        }
+    }
 
     pub fn run(&mut self) {
         use tui::widgets::*;
         loop {
             self.terminal.get_frame().set_cursor(0, 0);
-            if let Some(status) = self.worker_pool.device.recv() {
-                match status {
-                    DeviceStatus::Input(s) => {
-                        self.handle_strokes(s);
-                    }
+            if let Some(DeviceStatus::Input(s)) = self.worker_pool.device.recv() {
+                self.handle_strokes(s);
+            }
+            if let Some(InputStatus::Input(key)) = self.worker_pool.input.recv() {
+                let exit = self.handle_input(key);
+                if exit.is_some() {
+                    return;
                 }
             }
             let mut chord_history = self.output.clone();
@@ -252,6 +253,7 @@ impl Tui {
                 })
                 .unwrap();
             //self.terminal.get_frame().set_cursor(1, 1);
+            thread::sleep(Duration::from_millis(100));
             self.terminal.autoresize().unwrap();
         }
     }
@@ -304,8 +306,6 @@ impl Tui {
             .column_spacing(1)
             .style(Style::default().fg(Color::White).bg(Color::Black))
     }
-
-    fn draw_output() {}
 }
 #[derive(Clone)]
 struct History<T, S> {

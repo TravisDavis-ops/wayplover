@@ -175,10 +175,10 @@ fn main() {
         port: port.to_string(),
     };
     use workers::Worker;
-    let worker_pool = ui::WorkerPool {
+    let worker_pool = workers::WorkerPool {
         audio: workers::AudioWorker::start(config.clone()),
         device: workers::DeviceWorker::start(config.clone()),
-        input: workers::InputWorker::with_config(config.clone()),
+        input: workers::InputWorker::start(config.clone()),
     };
     let dictionary = steno::Dictionary::from_file(path);
 
