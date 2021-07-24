@@ -1,3 +1,6 @@
+#[cfg(test)]
+extern crate test_case;
+
 use super::Config;
 use log::{info, error};
 use super::Worker;
@@ -56,14 +59,18 @@ impl Worker<DeviceControl, DeviceStatus> for SerialWorker {
                         }
                     }
                     let mut byte_chord: [u8; BYTES_PER_STROKE] = [0; BYTES_PER_STROKE];
-                    if let Some(mut p) = port.take() {
-                        if let Err(_e) = p.read_exact(&mut byte_chord) {
-                            continue;
+                    //BUG(consomes port)
+                    match port.as_mut() {
+                        Some(p) => {
+                            if let Err(_e) = p.read_exact(&mut byte_chord){
+                                continue;
+                            }
                         }
-                    } else {
-                        error!("Failed to Connect Trying to Reconnect");
-                        port = serial::open(&config.port).ok();
-                        continue;
+                        None => {
+                            port = serial::open(&config.port).ok();
+                            continue;
+
+                        }
                     }
 
                     let mut temp = Vec::new();
@@ -100,7 +107,30 @@ impl Worker<DeviceControl, DeviceStatus> for SerialWorker {
         }
     }
 }
-
 #[cfg(test)]
-mod test {
+mod tests {
+    use test_case::test_case;
+    use super::*;
+
+    
+    #[test_case("/dev/ttyACM0" => false; "Thread can run")]
+    fn run(port: &str) -> bool {
+        let c = Config { port: port.to_string(), ..Default::default()};
+        let w = SerialWorker::start(c);
+        let input = loop {
+            let i = w.recv();
+            match i {
+                Some(s) => break s,
+                None => continue,
+            }
+        };
+        w.send(DeviceControl::Shutdown);
+        match input {
+            DeviceStatus::Input(c) => {
+                c.is_empty()
+            }
+        }
+
+    }
 }
+

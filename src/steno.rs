@@ -53,22 +53,22 @@ impl Chord {
     pub fn resolve(&self, dict: &mut Dictionary) -> Command {
         dict.lookup(
             self.0
-                .iter()
-                .map(|e| {
-                    let mut e = Vec::from(e.split("").collect::<Vec<&str>>());
-                    if e[0] == "-" {
-                        for i in 1..e.len() {
-                            if e[i] == "-" {
-                                e[i] = "";
-                            }
+            .iter()
+            .map(|e| {
+                let mut e = Vec::from(e.split("").collect::<Vec<&str>>());
+                if e[0] == "-" {
+                    for i in 1..e.len() {
+                        if e[i] == "-" {
+                            e[i] = "";
                         }
-                        e.join("")
-                    } else {
-                        e.join("").replace("-", "")
                     }
-                })
-                .collect::<Vec<String>>()
-                .join(""),
+                    e.join("")
+                } else {
+                    e.join("").replace("-", "")
+                }
+            })
+            .collect::<Vec<String>>()
+            .join(""),
         )
     }
     pub fn plain(&self) -> String {
@@ -92,7 +92,7 @@ sm! {
         InitialStates { Idle, Waiting, Finished}
         NeedMore {
             Idle => Waiting
-            Waiting => Waiting
+                Waiting => Waiting
         }
         Finish {
             Waiting => Finished
@@ -103,33 +103,35 @@ use Translator::*;
 pub struct Dictionary {
     conn: SqliteConnection,
     machine: Machine<Idle, NoneEvent>,
+    last: Vec<String>,
 }
 impl Dictionary {
     pub fn from_file(path: &str) -> Self {
         let conn = SqliteConnection::establish(path).unwrap();
         let machine = Machine::new(Idle);
-        Self { conn, machine }
+        Self { conn, machine, last: Vec::new() }
     }
 
     fn lookup(&mut self, in_chord: String) -> Command {
-        println!("{:?}", in_chord);
         if in_chord.eq(&"*".to_string()) {
             return Command::Delete;
         }
+        self.last.push(in_chord.clone());
         use crate::schema::dictionary::dsl::*;
-        if let Ok(mut e) = dictionary
-            .filter(chord.eq(&in_chord))
-            .order_by(id.desc())
-            .limit(1)
-            .load::<models::Entry>(&self.conn)
-        {
-            if let Some(e) = e.pop() {
+        let entry = dictionary.filter(chord.eq(&in_chord))
+                .order_by(id.desc())
+                .first::<models::Entry>(&self.conn);
+    
+        match entry {
+            Ok(e) => {
+                info!("Chord: {}, ({}, {})", in_chord, e.chord, e.translation);
+                self.last.clear();
                 return Command::Output(e.translation);
-            } else {
+            }
+            Err(_) => {
                 return Command::Error(in_chord);
             }
         }
-
-        return Command::Error(in_chord);
+         
     }
 }
