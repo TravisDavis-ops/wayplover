@@ -46,10 +46,11 @@ impl Worker<DeviceControl, DeviceStatus> for SerialWorker {
                         use DeviceControl::*;
                         match e {
                             Disconnect => {
-                                break;
+                                let _ = port.take().unwrap();
+                                continue;
                             }
-                            Reconnect(_) => {
-                                port = serial::open(&config.port).ok();
+                            Reconnect(path) => {
+                                port = serial::open(path).ok();
                                 continue;
                             }
                             Shutdown => {
@@ -59,7 +60,6 @@ impl Worker<DeviceControl, DeviceStatus> for SerialWorker {
                         }
                     }
                     let mut byte_chord: [u8; BYTES_PER_STROKE] = [0; BYTES_PER_STROKE];
-                    //BUG(consomes port)
                     match port.as_mut() {
                         Some(p) => {
                             if let Err(_e) = p.read_exact(&mut byte_chord){
@@ -67,6 +67,7 @@ impl Worker<DeviceControl, DeviceStatus> for SerialWorker {
                             }
                         }
                         None => {
+                            info!("USB:{} has disconnected", &config.port);
                             port = serial::open(&config.port).ok();
                             continue;
 
@@ -105,32 +106,6 @@ impl Worker<DeviceControl, DeviceStatus> for SerialWorker {
         } else {
             None
         }
-    }
-}
-#[cfg(test)]
-mod tests {
-    use test_case::test_case;
-    use super::*;
-
-    
-    #[test_case("/dev/ttyACM0" => false; "Thread can run")]
-    fn run(port: &str) -> bool {
-        let c = Config { port: port.to_string(), ..Default::default()};
-        let w = SerialWorker::start(c);
-        let input = loop {
-            let i = w.recv();
-            match i {
-                Some(s) => break s,
-                None => continue,
-            }
-        };
-        w.send(DeviceControl::Shutdown);
-        match input {
-            DeviceStatus::Input(c) => {
-                c.is_empty()
-            }
-        }
-
     }
 }
 

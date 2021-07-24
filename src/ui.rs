@@ -22,7 +22,24 @@ pub struct Tui {
     last: History<String, TableState>,
     raw: History<String, ListState>,
 }
-
+struct Keyboard(uinput::VirtualDevice);
+type KeyStream = Vec<Option<&'static (Option<VirtualKey>, VirtualKey)>>;
+impl Keyboard {
+    fn create_stream(cmd: ActionSymbol, text: String) {
+        let temp = Vec::new();
+        let text_stream:KeyStream = text.split("").map(|c|{ KEY_CODE.get(c)}).collect();
+        use ActionSymbol::*;
+        match cmd {
+            Suffix => {
+                temp.push(VirtualKey::KEY_BACKSPACE);
+            }
+            Delete => {
+                temp.extend(vec![VirtualKey::KEY_LEFTCTRL, VirtualKey::KEY_BACKSPACE])
+            }
+            _ => {}
+        }
+    }
+}
 impl Default for Tui {
     fn default() -> Self {
         let dictionary = Dictionary::from_file("./main.json");
@@ -164,12 +181,17 @@ impl Tui {
     fn handle_input(&mut self, key: PhysicalKey) -> Option<()> {
         match key {
             PhysicalKey::Ctrl('c') => {
-                WorkerPool::shutdown(&self.worker_pool.window);
                 #[cfg(feature = "sound")]
                 WorkerPool::shutdown(&self.worker_pool.audio);
+                WorkerPool::shutdown(&self.worker_pool.window);
                 WorkerPool::shutdown(&self.worker_pool.serial);
                 thread::sleep(Duration::from_millis(50));
                 self.terminal.clear().unwrap();
+                Some(())
+            }
+            PhysicalKey::Ctrl('r') => {
+                self.worker_pool.serial.send(serial::DeviceControl::Disconnect);
+                self.worker_pool.serial.send(serial::DeviceControl::Reconnect(""));
                 Some(())
             }
             _ => None,
