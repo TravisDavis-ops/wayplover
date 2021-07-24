@@ -1,31 +1,33 @@
+#[macro_use]
+extern crate diesel;
+extern crate sm;
 use clap::{App, Arg};
-use json;
+pub(crate) use log::{debug, error, info, trace, warn};
+use std::fs;
+use fern;
+use chrono;
 use lazy_static::lazy_static;
 use maplit::hashmap;
 use std::collections::{HashMap, HashSet};
-use std::fs::File;
-use std::io::prelude::*;
 use std::thread::sleep;
 use std::time::Duration;
-
+pub mod models;
+pub mod schema;
 pub mod steno;
 pub mod ui;
 pub mod utils;
-pub mod workers;
-
+mod workers;
 use evdev::{AttributeSet, Key};
+#[cfg(feature = "sound")]
+use workers::sound::AudioWorker;
+use workers::{serial::SerialWorker, window::InputWorker, Worker};
 
 const NAME: &str = env!("CARGO_CRATE_NAME");
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const AUTHORS: &str = env!("CARGO_PKG_AUTHORS");
 const DESCRIPTION: &str = env!("CARGO_PKG_DESCRIPTION");
+
 //todo move steno const to steno mod
-const BYTES_PER_STROKE: usize = 6;
-const STENO_MAP: [&str; 42] = [
-    "Fn", "#", "#", "#", "#", "#", "#", "S-", "S-", "T-", "K-", "P-", "W-", "H-", "R-", "A-", "O-",
-    "*", "*", "res", "res", "pwr", "*", "*", "-E", "-U", "-F", "-R", "-P", "-B", "-L", "-G", "-T",
-    "-S", "-D", "#", "#", "#", "#", "#", "#", "-Z",
-];
 lazy_static! {
     static ref KEY_CODE: HashMap<&'static str, (Option<Key>, Key)> = {
         hashmap! {
@@ -120,6 +122,7 @@ lazy_static! {
         }
     };
 }
+
 #[macro_export]
 macro_rules! key_set{
     ( $($n:expr), *) => {{
@@ -130,6 +133,7 @@ macro_rules! key_set{
             temp_key_set
     }};
 }
+
 #[macro_export]
 macro_rules! ordered_map {
     (@single $($x:tt)*) => (());
@@ -145,9 +149,18 @@ macro_rules! ordered_map {
         )*
         _map
     }
-
-
 }
+fn init() {
+    fern::Dispatch::new()
+        .level(log::LevelFilter::Debug)
+        .chain(fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(format!("/tmp/{}.log",NAME).as_str()).unwrap())
+    .apply().unwrap();
+}
+
 fn main() {
     let app = App::new(NAME)
         .version(VERSION)
@@ -167,21 +180,23 @@ fn main() {
                 .value_name("dictionary")
                 .help("The dictionary file to use."),
         );
+    init();
     let matches = app.get_matches();
     let port = matches.value_of("port").unwrap_or("/dev/ttyACM0");
     let path = matches.value_of("dictionary").unwrap_or("./main.json");
+    info!("-d {} -p {}", path, port);
     let config = workers::Config {
         tick_rate: Duration::from_millis(5),
         port: port.to_string(),
     };
-    use workers::Worker;
     let worker_pool = workers::WorkerPool {
-        audio: workers::AudioWorker::start(config.clone()),
-        device: workers::DeviceWorker::start(config.clone()),
-        input: workers::InputWorker::start(config.clone()),
+        #[cfg(feature = "sound")]
+        audio: AudioWorker::start(config.clone()),
+        serial: SerialWorker::start(config.clone()),
+        window: InputWorker::start(config.clone()),
     };
     let dictionary = steno::Dictionary::from_file(path);
-
+    
     let mut ui = ui::Tui::new(worker_pool, dictionary);
     ui.run();
 }

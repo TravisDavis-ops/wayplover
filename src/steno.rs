@@ -1,11 +1,9 @@
 use crate::*;
+use diesel::prelude::*;
 use regex::*;
 use std::borrow::*;
-
 #[derive(Debug)]
-pub struct Stroke {
-    pub keys: Vec<String>,
-}
+pub struct Chord(Vec<String>);
 #[derive(Clone)]
 pub enum Command {
     Append(String),
@@ -30,7 +28,7 @@ impl Command {
         }
     }
 }
-impl Stroke {
+impl Chord {
     pub fn new(steno_keys: Vec<&str>) -> Self {
         let mut key_set = HashSet::new();
         for key in steno_keys {
@@ -47,85 +45,91 @@ impl Stroke {
                     number_steno_vec[i] = number.to_string();
                 }
             }
-            return Self {
-                keys: number_steno_vec,
-            };
+            return Self(number_steno_vec);
         }
         //let steno_vec = steno_vec.iter_mut().map(|e| e.replace("-", "")).collect();
-        Self { keys: steno_vec }
+        Self(steno_vec)
     }
     pub fn resolve(&self, dict: &mut Dictionary) -> Command {
         dict.lookup(
-            self.keys
+            self.0
                 .iter()
-                .map(|e| e.replace("-", ""))
+                .map(|e| {
+                    let mut e = Vec::from(e.split("").collect::<Vec<&str>>());
+                    if e[0] == "-" {
+                        for i in 1..e.len() {
+                            if e[i] == "-" {
+                                e[i] = "";
+                            }
+                        }
+                        e.join("")
+                    } else {
+                        e.join("").replace("-", "")
+                    }
+                })
                 .collect::<Vec<String>>()
                 .join(""),
         )
     }
     pub fn plain(&self) -> String {
-        self.keys
+        self.0
             .iter()
             .map(|e| e.replace("-", ""))
             .collect::<Vec<String>>()
             .join("")
     }
     pub fn raw(&self) -> Vec<String> {
-        self.keys.clone()
+        self.0.clone()
     }
     pub fn is_empty(&self) -> bool {
-        self.keys.is_empty()
+        self.0.is_empty()
     }
 }
+use sm::sm;
+use sm::NoneEvent;
+sm! {
+    Translator {
+        InitialStates { Idle, Waiting, Finished}
+        NeedMore {
+            Idle => Waiting
+            Waiting => Waiting
+        }
+        Finish {
+            Waiting => Finished
+        }
+    }
+}
+use Translator::*;
 pub struct Dictionary {
-    pub repr: HashMap<String, String>,
-    pub last: Option<String>,
+    conn: SqliteConnection,
+    machine: Machine<Idle, NoneEvent>,
 }
 impl Dictionary {
     pub fn from_file(path: &str) -> Self {
-        let mut file = File::open(path).unwrap();
-        let mut contents = std::string::String::new();
-        let _bytes_read = file.read_to_string(&mut contents);
-        let json = json::parse(&contents).unwrap();
-        use json::JsonValue::*;
-        match json {
-            Object(mut obj) => {
-                let mut map = HashMap::new();
-                for (key, value) in obj.iter_mut() {
-                    map.insert(key.to_string(), value.to_string());
-                }
-                Self {
-                    repr: map,
-                    last: None,
-                }
-            }
-            _ => {
-                panic!();
-            }
-        }
+        let conn = SqliteConnection::establish(path).unwrap();
+        let machine = Machine::new(Idle);
+        Self { conn, machine }
     }
 
-    fn lookup(&mut self, chord: String) -> Command {
-        if chord.eq(&"*".to_string()) {
+    fn lookup(&mut self, in_chord: String) -> Command {
+        println!("{:?}", in_chord);
+        if in_chord.eq(&"*".to_string()) {
             return Command::Delete;
         }
-        // i need to get a handle on this dictonary problem
-
-        if let Some(stroke) = self.repr.get(&chord) {
-            let re = Regex::new(r"\{\^(?P<suffix>\w*)\}").unwrap();
-            let captures = re.captures(&stroke);
-            if let Some(cap) = captures {
-                if let Some(last) = self.last.clone() {
-                    return Command::Append(format!("{}{}", last, &cap["suffix"]));
-                }
-                return Command::Output(cap["suffix"].to_string());
+        use crate::schema::dictionary::dsl::*;
+        if let Ok(mut e) = dictionary
+            .filter(chord.eq(&in_chord))
+            .order_by(id.desc())
+            .limit(1)
+            .load::<models::Entry>(&self.conn)
+        {
+            if let Some(e) = e.pop() {
+                return Command::Output(e.translation);
             } else {
-                self.last = Some(stroke.to_owned());
-                return Command::Output(stroke.to_owned());
+                return Command::Error(in_chord);
             }
         }
-        self.last = None;
 
-        return Command::Error(chord);
+        return Command::Error(in_chord);
     }
 }

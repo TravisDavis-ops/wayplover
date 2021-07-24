@@ -1,8 +1,7 @@
-use crate::workers::{
-    AudioControl, AudioWorker, Config, DeviceStatus, DeviceWorker, InputStatus, InputWorker,
-    Shutdown, Sound, Worker, WorkerPool,
-};
-
+#[cfg(feature = "sound")]
+use crate::workers::sound;
+use crate::workers::{serial, window};
+use crate::workers::{Config, Shutdown, Worker, WorkerPool};
 use crate::{steno::*, *};
 use evdev::{uinput, Key as VirtualKey};
 use std::convert::TryInto;
@@ -14,7 +13,6 @@ use termion::{
     raw::{IntoRawMode, RawTerminal},
 };
 use tui::{backend::TermionBackend, layout::*, widgets::*, Terminal};
-
 pub struct Tui {
     terminal: Terminal<TermionBackend<RawTerminal<std::io::Stdout>>>,
     keyboard: uinput::VirtualDevice,
@@ -35,9 +33,10 @@ impl Default for Tui {
         let last = History::new(Vec::new(), 1);
         let config = Config::default();
         let worker_pool = WorkerPool {
-            audio: AudioWorker::start(config.clone()),
-            device: DeviceWorker::start(config.clone()),
-            input: InputWorker::start(config.clone()),
+            #[cfg(feature = "sound")]
+            audio: sound::AudioWorker::start(config.clone()),
+            serial: serial::SerialWorker::start(config.clone()),
+            window: window::InputWorker::start(config.clone()),
         };
         let keyboard = uinput::VirtualDeviceBuilder::new()
             .unwrap()
@@ -58,7 +57,6 @@ impl Default for Tui {
         }
     }
 }
-
 impl Tui {
     pub fn new(worker_pool: WorkerPool, dictionary: Dictionary) -> Self {
         let backend = TermionBackend::new(stdout().into_raw_mode().unwrap());
@@ -84,20 +82,21 @@ impl Tui {
             worker_pool,
         }
     }
-    fn handle_strokes(&mut self, stroke: Stroke) {
+    fn handle_chord(&mut self, chord: Chord) {
         use evdev::*;
         let mut seq = Vec::new();
         let (sym, text) = {
-            let s = stroke.resolve(&mut self.dictionary);
+            let s = chord.resolve(&mut self.dictionary);
+            #[cfg(feature = "sound")]
             match s.clone() {
                 Command::Error(_) => self
                     .worker_pool
                     .audio
-                    .send(AudioControl::Play(Sound::Error)),
+                    .send(sound::AudioControl::Play(Sound::Error)),
                 Command::Output(text) => self
                     .worker_pool
                     .audio
-                    .send(AudioControl::Speak(text.clone())),
+                    .send(sound::AudioControl::Speak(text.clone())),
                 _ => {}
             }
             s.as_text()
@@ -155,19 +154,20 @@ impl Tui {
                 }
             }
         }
-        self.output.push(stroke.resolve(&mut self.dictionary));
+        self.output.push(chord.resolve(&mut self.dictionary));
         self.output.select(0);
-        self.raw.push(stroke.plain());
+        self.raw.push(chord.plain());
         self.raw.select(0);
-        self.last.replace(stroke.raw())
+        self.last.replace(chord.raw())
     }
 
     fn handle_input(&mut self, key: PhysicalKey) -> Option<()> {
         match key {
             PhysicalKey::Ctrl('c') => {
-                WorkerPool::shutdown(&self.worker_pool.input);
+                WorkerPool::shutdown(&self.worker_pool.window);
+                #[cfg(feature = "sound")]
                 WorkerPool::shutdown(&self.worker_pool.audio);
-                WorkerPool::shutdown(&self.worker_pool.device);
+                WorkerPool::shutdown(&self.worker_pool.serial);
                 thread::sleep(Duration::from_millis(50));
                 self.terminal.clear().unwrap();
                 Some(())
@@ -180,10 +180,10 @@ impl Tui {
         use tui::widgets::*;
         loop {
             self.terminal.get_frame().set_cursor(0, 0);
-            if let Some(DeviceStatus::Input(s)) = self.worker_pool.device.recv() {
-                self.handle_strokes(s);
+            if let Some(serial::DeviceStatus::Input(s)) = self.worker_pool.serial.recv() {
+                self.handle_chord(s);
             }
-            if let Some(InputStatus::Input(key)) = self.worker_pool.input.recv() {
+            if let Some(window::InputStatus::Input(key)) = self.worker_pool.window.recv() {
                 let exit = self.handle_input(key);
                 if exit.is_some() {
                     return;
@@ -274,7 +274,7 @@ impl Tui {
             })
             .collect();
         let window = Block::default()
-            .title(format!("Stroke History: {}/{}", strokes.len(), max))
+            .title(format!("Chord History: {}/{}", strokes.len(), max))
             .borders(Borders::all());
         List::new(strokes.into_iter().rev().collect::<Vec<ListItem>>())
             .block(window)

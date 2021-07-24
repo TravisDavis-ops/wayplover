@@ -7,16 +7,23 @@ name = "wayplover"
 readme = "README.md"
 repository = "https://www.github.com/Travisdavis-ops/wayplover"
 version = "0.1.2"
+[features]
+sound = ["rodio", "tts"]
 
 [dependencies]
+sm = "0.9.0"
 clap = "2.33.3"
+fern = "0.6.0"
+log = "0.4.0"
+chrono = "0.4.19"
+diesel = {version = "1.4.7", features=["sqlite"]}
 evdev = "0.11.0"
 json = "0.12.4"
 lazy_static = "1.4.0"
 maplit = "1.0.2"
 regex = "1.5.4"
-rodio = "0.14.0"
+rodio = {version="0.14.0", optional=true}
 serial = "0.4.0"
 termion = "1.5"
-tts = "0.17.3"
+tts = {version="0.17.3", optional=true}
 tui = "0.15"
