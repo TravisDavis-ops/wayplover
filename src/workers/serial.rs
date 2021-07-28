@@ -19,6 +19,7 @@ const STENO_MAP: [&str; 42] = [
 
 pub enum DeviceStatus {
     Input(Chord),
+    Disconnected,
 }
 #[derive(Debug)]
 pub enum DeviceControl {
@@ -41,20 +42,19 @@ impl Worker<DeviceControl, DeviceStatus> for SerialWorker {
             .spawn(move || {
                 let mut port = serial::open(&config.port).ok();
                 loop {
-                    // was a message send
                     if let Ok(e) = thread_rx.try_recv() {
+                        info!("{:?}", e);
+                        println!("{:?}", e);
                         use DeviceControl::*;
                         match e {
                             Disconnect => {
-                                let _ = port.take().unwrap();
-                                continue;
+                                //let _  = port.take();
+                                thread_tx.send(DeviceStatus::Disconnected);
                             }
                             Reconnect(path) => {
-                                port = serial::open(path).ok();
-                                continue;
+                                //port = serial::open(path).ok();
                             }
                             Shutdown => {
-                                break;
                             }
                             _ => {}
                         }
@@ -62,15 +62,23 @@ impl Worker<DeviceControl, DeviceStatus> for SerialWorker {
                     let mut byte_chord: [u8; BYTES_PER_STROKE] = [0; BYTES_PER_STROKE];
                     match port.as_mut() {
                         Some(p) => {
-                            if let Err(_e) = p.read_exact(&mut byte_chord){
-                                continue;
+                            if let Err(e) = p.read_exact(&mut byte_chord){
+                                
                             }
                         }
-                        None => {
-                            info!("USB:{} has disconnected", &config.port);
-                            port = serial::open(&config.port).ok();
-                            continue;
+                        None => loop {
 
+                            use std::time::Duration;
+                            thread::sleep(Duration::from_millis(30));
+                            use DeviceControl::*;
+                            if let Ok(e) = thread_rx.try_recv() {
+                                match e {
+                                    Reconnect(path) => {
+                                        port = serial::open(path).ok();
+                                    }
+                                    _ => {}
+                                }
+                            }
                         }
                     }
 
