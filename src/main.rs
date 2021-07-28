@@ -153,6 +153,15 @@ macro_rules! ordered_map {
 fn init() {
     fern::Dispatch::new()
         .level(log::LevelFilter::Debug)
+        .format(|out, message, record|{
+            out.finish(format_args!(
+                    "{}[{}][{}] {}",
+                    chrono::Local::now().format("[%Y-%m-%d]"),
+                    record.target(),
+                    record.level(),
+                    message,
+            ))
+        })
         .chain(fs::OpenOptions::new()
             .write(true)
             .create(true)

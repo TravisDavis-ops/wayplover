@@ -53,22 +53,22 @@ impl Chord {
     pub fn resolve(&self, dict: &mut Dictionary) -> Command {
         dict.lookup(
             self.0
-            .iter()
-            .map(|e| {
-                let mut e = Vec::from(e.split("").collect::<Vec<&str>>());
-                if e[0] == "-" {
-                    for i in 1..e.len() {
-                        if e[i] == "-" {
-                            e[i] = "";
+                .iter()
+                .map(|e| {
+                    let mut e = Vec::from(e.split("").collect::<Vec<&str>>());
+                    if e[0] == "-" {
+                        for i in 1..e.len() {
+                            if e[i] == "-" {
+                                e[i] = "";
+                            }
                         }
+                        e.join("")
+                    } else {
+                        e.join("").replace("-", "")
                     }
-                    e.join("")
-                } else {
-                    e.join("").replace("-", "")
-                }
-            })
-            .collect::<Vec<String>>()
-            .join(""),
+                })
+                .collect::<Vec<String>>()
+                .join(""),
         )
     }
     pub fn plain(&self) -> String {
@@ -102,14 +102,23 @@ sm! {
 use Translator::*;
 pub struct Dictionary {
     conn: SqliteConnection,
-    machine: Machine<Idle, NoneEvent>,
+    path: String,
     last: Vec<String>,
+}
+impl Clone for Dictionary {
+    fn clone(&self) -> Self {
+        let conn = SqliteConnection::establish(self.path.as_str()).unwrap();
+        Self{conn, last: self.last.clone(), path: self.path.clone()}
+    }
 }
 impl Dictionary {
     pub fn from_file(path: &str) -> Self {
         let conn = SqliteConnection::establish(path).unwrap();
-        let machine = Machine::new(Idle);
-        Self { conn, machine, last: Vec::new() }
+        Self {
+            conn,
+            path: path.to_string(),
+            last: Vec::new(),
+        }
     }
 
     fn lookup(&mut self, in_chord: String) -> Command {
@@ -118,10 +127,11 @@ impl Dictionary {
         }
         self.last.push(in_chord.clone());
         use crate::schema::dictionary::dsl::*;
-        let entry = dictionary.filter(chord.eq(&in_chord))
-                .order_by(id.desc())
-                .first::<models::Entry>(&self.conn);
-    
+        let entry = dictionary
+            .filter(chord.eq(&in_chord))
+            .order_by(id.desc())
+            .first::<models::Entry>(&self.conn);
+
         match entry {
             Ok(e) => {
                 info!("Chord: {}, ({}, {})", in_chord, e.chord, e.translation);
@@ -132,6 +142,14 @@ impl Dictionary {
                 return Command::Error(in_chord);
             }
         }
-         
+    }
+
+    pub fn find(&self, search: &String) -> Vec<models::Entry> {
+        use crate::schema::dictionary::dsl::*;
+        dictionary
+            .filter(chord.like(format!("%{}%", search)))
+            .order_by(id.asc())
+            .load::<models::Entry>(&self.conn)
+            .unwrap()
     }
 }

@@ -12,32 +12,55 @@ use termion::{
     event::Key as PhysicalKey,
     raw::{IntoRawMode, RawTerminal},
 };
-use tui::{backend::TermionBackend, layout::*, widgets::*, Terminal};
+use tui::text::*;
+use tui::{
+    backend::TermionBackend, 
+    layout::*, 
+    widgets::*, 
+    style::*,
+    Terminal
+};
+
 pub struct Tui {
     terminal: Terminal<TermionBackend<RawTerminal<std::io::Stdout>>>,
     keyboard: uinput::VirtualDevice,
     worker_pool: WorkerPool,
     dictionary: Dictionary,
-    output: History<Command, ListState>,
+    output: History<String, ListState>,
     last: History<String, TableState>,
     raw: History<String, ListState>,
+    input: Vec<String>,
+}
+enum Signal {
+    Shutdown,
 }
 struct Keyboard(uinput::VirtualDevice);
 type KeyStream = Vec<Option<&'static (Option<VirtualKey>, VirtualKey)>>;
 impl Keyboard {
-    fn create_stream(cmd: ActionSymbol, text: String) {
-        let temp = Vec::new();
-        let text_stream:KeyStream = text.split("").map(|c|{ KEY_CODE.get(c)}).collect();
+    fn create_stream(cmd: ActionSymbol, text: String) -> Vec<VirtualKey> {
+        let mut temp = Vec::new();
+        let text_stream: KeyStream = text.split("").map(|c| KEY_CODE.get(c)).collect();
         use ActionSymbol::*;
         match cmd {
             Suffix => {
                 temp.push(VirtualKey::KEY_BACKSPACE);
             }
-            Delete => {
-                temp.extend(vec![VirtualKey::KEY_LEFTCTRL, VirtualKey::KEY_BACKSPACE])
-            }
+            Delete => temp.extend(vec![VirtualKey::KEY_LEFTCTRL, VirtualKey::KEY_BACKSPACE]),
             _ => {}
         }
+        for key_combo in text_stream {
+            if let Some(combo) = key_combo {
+                match combo {
+                    (Some(modifier), letter) => {
+                        temp.extend(vec![modifier, letter]);
+                    }
+                    (None, letter) => {
+                        temp.push(*letter);
+                    }
+                }
+            }
+        }
+        temp
     }
 }
 impl Default for Tui {
@@ -71,6 +94,7 @@ impl Default for Tui {
             output,
             dictionary,
             worker_pool,
+            input: Vec::new(),
         }
     }
 }
@@ -97,8 +121,10 @@ impl Tui {
             output,
             dictionary,
             worker_pool,
+            input: Vec::new(),
         }
     }
+
     fn handle_chord(&mut self, chord: Chord) {
         use evdev::*;
         let mut seq = Vec::new();
@@ -171,14 +197,18 @@ impl Tui {
                 }
             }
         }
-        self.output.push(chord.resolve(&mut self.dictionary));
+        match chord.resolve(&mut self.dictionary).as_text() {
+            (_, t) => {
+                self.output.push(t);
+            }
+        }
         self.output.select(0);
         self.raw.push(chord.plain());
         self.raw.select(0);
         self.last.replace(chord.raw())
     }
 
-    fn handle_input(&mut self, key: PhysicalKey) -> Option<()> {
+    fn handle_input(&mut self, key: PhysicalKey) -> Option<Signal> {
         match key {
             PhysicalKey::Ctrl('c') => {
                 #[cfg(feature = "sound")]
@@ -187,12 +217,29 @@ impl Tui {
                 WorkerPool::shutdown(&self.worker_pool.serial);
                 thread::sleep(Duration::from_millis(50));
                 self.terminal.clear().unwrap();
-                Some(())
+                Some(Signal::Shutdown)
             }
             PhysicalKey::Ctrl('r') => {
-                self.worker_pool.serial.send(serial::DeviceControl::Disconnect);
-                self.worker_pool.serial.send(serial::DeviceControl::Reconnect(""));
-                Some(())
+                self.worker_pool
+                    .serial
+                    .send(serial::DeviceControl::Disconnect);
+                self.worker_pool
+                    .serial
+                    .send(serial::DeviceControl::Reconnect("/dev/ttyACM0"));
+                thread::sleep(Duration::from_millis(50));
+                None
+            }
+            PhysicalKey::Char(c) => {
+                self.input.push(c.into());
+                None
+            }
+            PhysicalKey::Backspace => {
+                self.input.pop();
+                None
+            }
+            PhysicalKey::Esc => {
+                self.input.clear();
+                None
             }
             _ => None,
         }
@@ -206,14 +253,20 @@ impl Tui {
                 self.handle_chord(s);
             }
             if let Some(window::InputStatus::Input(key)) = self.worker_pool.window.recv() {
-                let exit = self.handle_input(key);
-                if exit.is_some() {
-                    return;
+                let state = self.handle_input(key);
+                use Signal::*;
+                match state {
+                    Some(Shutdown) => {
+                        return;
+                    }
+                    _ => {}
                 }
             }
-            let mut chord_history = self.output.clone();
-            let mut stroke_history = self.raw.clone();
-            let last_stroke = self.last.clone();
+            let mut output = self.output.clone();
+            let mut raw = self.raw.clone();
+            let last = self.last.clone();
+            let input = self.input.clone();
+            let dict = self.dictionary.clone();
             self.terminal
                 .draw(|f| {
                     let size = f.size();
@@ -222,68 +275,55 @@ impl Tui {
                         .margin(1)
                         .constraints(
                             [
-                                Constraint::Percentage(70),
-                                Constraint::Ratio(1, 15),
-                                Constraint::Percentage(20),
+                            Constraint::Min(0),
+                            Constraint::Ratio(1, 16),
+                            Constraint::Min(0),
+                            Constraint::Percentage(25),
                             ]
                             .as_ref(),
                         )
                         .split(size);
 
-                    {
-                        /*
-                         * Chord History
-                         * */
-                        let max = chord_history.max_size.clone();
-                        let chords: Vec<ListItem> = chord_history
-                            .items
-                            .iter()
-                            .map(|cmd: &steno::Command| {
-                                use steno::Command::*;
-                                use tui::style::*;
-                                match cmd {
-                                    Append(suffix) => ListItem::new(suffix.as_str())
-                                        .style(Style::default().fg(Color::Yellow)),
-                                    Output(text) => ListItem::new(text.as_str()),
-                                    Error(stroke) => ListItem::new(stroke.as_str())
-                                        .style(Style::default().fg(Color::LightRed)),
-                                    Delete => ListItem::new("*")
-                                        .style(Style::default().fg(Color::LightCyan)),
-                                }
-                            })
-                            .collect();
-                        let container = Block::default()
-                            .title(format!("Chord History: {}/{}", chords.len(), max))
-                            .borders(Borders::all());
-                        let chord_list =
-                            List::new(chords.into_iter().rev().collect::<Vec<ListItem>>())
-                                .block(container)
-                                .highlight_symbol(">>");
-
-                        f.render_stateful_widget(chord_list, segments[0], &mut chord_history.state);
-                    }
                     let mut widths: Vec<Constraint> = Vec::new();
                     for _ in 0..STENO_ORDER.len() {
                         widths.push(Constraint::Ratio(1, STENO_ORDER.len().try_into().unwrap()));
                     }
-                    f.render_widget(Self::draw_last(&last_stroke).widths(&widths), segments[1]);
-                    f.render_stateful_widget(
-                        Self::draw_histroy(&stroke_history),
-                        segments[2],
-                        stroke_history.state(),
-                    );
+                    f.render_stateful_widget(Self::draw_output(&output), segments[0], output.state());
+                    f.render_widget(Self::draw_last(&last).widths(&widths), segments[1]);
+                    f.render_stateful_widget(Self::draw_histroy(&raw), segments[2], raw.state());
+                    
+                    let (input, results) = Self::draw_lookup(input, &dict, segments[3]);
+                    f.render_widget(input.0, input.1);
+                    f.render_widget(results.0, results.1);
+
                 })
-                .unwrap();
+            .unwrap();
             //self.terminal.get_frame().set_cursor(1, 1);
             thread::sleep(Duration::from_millis(100));
             self.terminal.autoresize().unwrap();
         }
     }
 
+    fn draw_output(history: &History<String, ListState>) -> List<'static> {
+        let max = history.max_size;
+        let output: Vec<ListItem> = history
+            .items
+            .iter()
+            .map(|out| {
+                ListItem::new(out.to_owned()).style(Style::default().fg(Color::White))
+            })
+            .collect();
+        let container = Block::default()
+            .title(format!("Output History: {}/{}", output.len(), max))
+            .borders(Borders::all());
+        List::new(output.into_iter().rev().collect::<Vec<ListItem>>())
+            .block(container)
+            .highlight_symbol(">>")
+    }
+
     fn draw_histroy(history: &History<String, ListState>) -> List<'static> {
         let max = history.max_size;
         let strokes: Vec<ListItem> = history
-            .clone()
             .items
             .iter()
             .map(|i| {
@@ -294,7 +334,7 @@ impl Tui {
                 let s = s.join("");
                 ListItem::new(s)
             })
-            .collect();
+        .collect();
         let window = Block::default()
             .title(format!("Chord History: {}/{}", strokes.len(), max))
             .borders(Borders::all());
@@ -319,7 +359,7 @@ impl Tui {
                         .style(Style::default().fg(Color::Blue))
                 }
             })
-            .collect::<Vec<Cell>>();
+        .collect::<Vec<Cell>>();
         let header = Row::new(cells);
 
         Table::new(vec![])
@@ -327,6 +367,27 @@ impl Tui {
             .block(Block::default().title("Steno Order").borders(Borders::ALL))
             .column_spacing(1)
             .style(Style::default().fg(Color::White).bg(Color::Black))
+    }
+
+    fn draw_lookup(input:Vec<String>, dictionary:&Dictionary, area: Rect) -> ((Paragraph<'static>, Rect), (List<'static>, Rect)) {
+        let layout = Layout::default()
+            .constraints([Constraint::Min(0), Constraint::Percentage(60)].as_ref())
+            .split(area);
+        use models::Entry;
+        let full_input = input.join("");
+        let c1 = Block::default().title("Lookup").borders(Borders::all());
+        let c2 = c1.clone().title("Input");
+        let mut results : Vec<Entry> = Vec::new();
+        if !full_input.is_empty()  {
+            results = dictionary.find(&full_input);
+        }
+        let items: Vec<ListItem> = results
+            .into_iter()
+            .map(|e| ListItem::new(e.chord))
+            .collect();
+        let l = List::new(items).block(c1).highlight_symbol(">>");
+        let p = Paragraph::new(vec![Spans::from(vec![Span::raw(full_input)])]).block(c2);
+        ((p, layout[0]), (l, layout[1]))
     }
 }
 #[derive(Clone)]
