@@ -2,6 +2,13 @@
 
 *Steno for Wayland*
 
+<div align="center">
+  
+  ![Demo](https://via.placeholder.com/400x150)
+  
+</div>
+
+
 ##  Why
 
 Plover did not support wayland so I built this to avoid changing my system to learn about it. plus tui's are badass 
@@ -40,14 +47,16 @@ you don't use steno for all day typing but what simple access to your "abbreviat
 - [x] Chord History
 - [x] Last Chord Visual
 - [x] Dictionary Lookup
+
 ## Support
 *Only tested with Qmk Keyboard(Planck rev6)*
 - [x] Gemini-PR
 - [ ] TX-Bolt
+
 ## TODO
 - [x] feature flag sound
 - [ ] output toggle
 - [ ] settings ui
 - [ ] translations ui
 - [ ] Dictonary manager 
-- [?] full dictionary support
+- [ ] full dictionary support
