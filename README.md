@@ -14,7 +14,7 @@ A Stenography tool for wayland. supports some of the plover dictionary format.
 
 if you interested in learning or a try to understand what this is for please checkout
 
-[The Open Steno Project\]([https://www.openstenoproject.org/plover](https://www.openstenoproject.org/plover/))
+[The Open Steno Project]([https://www.openstenoproject.org/plover](https://www.openstenoproject.org/plover/))
 
 ## Build
 
@@ -49,4 +49,5 @@ you don't use steno for all day typing but what simple access to your "abbreviat
 - [ ] output toggle
 - [ ] settings ui
 - [ ] translations ui
+- [ ] Dictonary manager 
 - [?] full dictionary support
